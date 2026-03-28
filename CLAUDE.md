@@ -236,6 +236,62 @@ Instead of a monolithic agent -- coordinator + specialized sub-agents:
 ### Relationship to Harness Design
 This extends Generator-Evaluator: coordinator = third role. For tasks touching >3 files, consider multi-agent decomposition.
 
+### Cross-Agent Trajectory Sharing (HACRL Pattern)
+
+Source: [2603.02604] HACRL -- Heterogeneous Agent Collaborative RL
+
+**Principle**: heterogeneous models share **successful reasoning trajectories** during training. Bidirectional -- a smaller model can teach a larger one. At inference -- fully independent.
+
+**Practical implementation in Claude Code:**
+- Each session = rollout. Successful patterns -> memory files = trajectory sharing between sessions
+- Multi-agent tasks: agents with different strategies (conservative vs aggressive) -> share successful approaches through artifacts
+- Session Learning Extraction (below) = the mechanism for trajectory sharing
+
+**Result**: +3.3% vs baseline at **half** rollout cost. Diversity of approaches + sharing winners > single model grinding.
+
+## REVIEW.md -- Review-Specific Guidance
+
+Source: code.claude.com/docs/en/code-review (Mar 2026)
+
+**REVIEW.md** -- a file in the repo root, read **only** during code review (not during regular sessions).
+
+**Purpose**: separate review-specific rules from CLAUDE.md -- "what to flag during review" should not clutter everyday instructions.
+
+**Structure:**
+```markdown
+## Always check
+- New API endpoints have integration tests
+- DB migrations are backward-compatible
+## Style
+- Prefer match over chained isinstance
+## Skip
+- Generated files under src/gen/
+```
+
+**Severity taxonomy:**
+| Marker | Level | Meaning |
+|--------|-------|---------|
+| 🔴 | Important | Blocker before merge |
+| 🟡 | Nit | Worth fixing, not blocking |
+| 🟣 | Pre-existing | Bug predates the PR |
+
+**Bidirectional**: if a PR makes CLAUDE.md/REVIEW.md outdated, that is also a finding.
+
+## Session Learning Extraction -- Memory Between Sessions
+
+Source: Lukyanenko BigTech patterns (Mar 2026)
+
+**Principle**: after each session, automatically collect "learnings" and merge into memory. This is the practical implementation of HACRL trajectory sharing -- successful reasoning from session N is available in session N+1.
+
+**What to extract:**
+1. **New capabilities** -- the model learned to do X (new tool, workflow, framework)
+2. **Corrections** -- user corrected the approach (-> feedback memory)
+3. **Permissions granted** -- new allowed commands (-> settings)
+4. **Bugs + fixes** -- symptom -> cause -> fix (-> gotchas in skill or CLAUDE.md)
+5. **Decisions** -- architectural decisions with rationale (-> DECISIONS.md or memory)
+
+**Mechanism**: hook at session end or `/revise-claude-md` skill + structured extraction -> merge into memory/CLAUDE.md.
+
 ## Codified Context -- Context as Infrastructure
 
 Source: [2602.20478] Codified Context: Infrastructure for AI Agents in a Complex Codebase

@@ -189,11 +189,40 @@ If the coordinator starts writing code, it loses its planning perspective. The c
 
 ---
 
+## Cross-Agent Trajectory Sharing (HACRL Pattern)
+
+Source: [2603.02604] HACRL -- Heterogeneous Agent Collaborative RL (Mar 2026)
+
+In reinforcement learning, HACRL shows that heterogeneous models (different sizes, architectures) training together and **sharing successful reasoning trajectories** outperform isolated training. The key insight: it is bidirectional -- a smaller model can teach a larger one if it found a better reasoning path. At inference, models are fully independent (no coordination overhead).
+
+### Practical Application to Multi-Agent Systems
+
+This principle translates directly to agentic coding:
+
+1. **Session learning as trajectory sharing.** Each Claude Code session is a "rollout." Successful patterns extracted into memory files become shared trajectories that improve all future sessions. This is the practical equivalent of HACRL's rollout sharing.
+
+2. **Heterogeneous agent composition.** When launching parallel sub-agents, give them **different strategies** (conservative vs aggressive, breadth-first vs depth-first). Homogeneous agents produce homogeneous blind spots. HACRL shows diversity of perspectives + sharing winners > single strategy grinding.
+
+3. **Share successful patterns, not raw outputs.** HACRL agents do not share everything -- they share **verified successful trajectories**. In practice: extract the pattern/approach that worked, not the full conversation history. Memory files should capture the reusable insight, not the debugging session.
+
+4. **Independent at inference.** Sub-agents do not need runtime coordination if they share knowledge through artifacts (PLAN.md, CONTRACTS.md, memory files). This is why shared artifacts > conversation-based coordination -- it mirrors HACRL's "train together, infer independently."
+
+### Production Validation: Claude Code Review
+
+Anthropic's Code Review (Mar 2026) is a production implementation of parallel specialized agents:
+- Fleet of agents, each checking a different class of bugs
+- Verification step for cross-validation of false positives
+- <1% of findings marked incorrect by engineers
+- Confirms: parallel specialized agents > monolith reviewer
+
+---
+
 ## Relationship to Other Principles
 
 | Principle | Relationship |
 |---|---|
 | **Harness Design (01)** | Decomposition extends Generator-Evaluator with a coordinator role |
 | **Proof Loop (02)** | Each sub-agent's output can be verified independently through the proof loop |
+| **Autoresearch (03)** | HACRL's trajectory sharing strengthens autoresearch: diverse strategies in parallel + share winners |
 | **Deterministic Orchestration (04)** | The coordinator's task assignment and integration checking can be partially deterministic (scripts checking contract compatibility) |
-| **Codified Context (07)** | Shared artifacts (PLAN.md, CONTRACTS.md, STATE.json) are codified context that enables coordination without shared conversation history |
+| **Codified Context (07)** | Shared artifacts (PLAN.md, CONTRACTS.md, STATE.json) are codified context that enables coordination without shared conversation history -- mirrors HACRL's "train together, infer independently" |
