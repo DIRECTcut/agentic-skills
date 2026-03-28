@@ -1,106 +1,256 @@
-# Skills Best Practices
+# 08 - Skills Best Practices: Building Reliable Claude Code Skills
 
-Distilled from real-world skill development across 30+ custom skills.
+**Source:** Production experience across multiple Claude Code deployments
 
-## The Golden Rule
+## Overview
 
-**The skill description is a trigger for the model, not a description for humans.**
+A skill is a reusable package of knowledge and procedure that a Claude Code agent can invoke. The difference between a skill that gets used effectively and one that gathers dust comes down to three things: discoverability (the model finds it when needed), reliability (it works every time), and maintainability (it stays accurate as the project evolves).
+
+---
+
+## Description as Trigger
+
+The description field in a skill is NOT documentation for humans. It is a **trigger for the model** -- the text that determines whether the model selects this skill for a given task.
+
+### The Formula
 
 ```
-BAD:  "Helps with servers."
-GOOD: "Use when: ComfyUI hangs, GPU health check, SSH tunnel issues on port 2222."
+[What the skill does] + [When to use it -- specific trigger phrases] + [Key capabilities]
 ```
 
-The description determines WHEN Claude activates the skill. Include concrete trigger phrases that users actually say.
+### Examples
 
-## Description Formula
-
+**Bad:**
 ```
-[What it does] + [When to use -- specific trigger phrases] + [Key capabilities]
+"Helps with servers."
 ```
+The model will rarely select this skill because "helps with servers" matches almost nothing a user would say.
 
-Example:
-```yaml
-description: |
-  Parallel competency-based code review. Launches independent reviewers per competency
-  (security, performance, architecture, database, concurrency, error-handling, frontend,
-  testing). Use when: "deep review", "thorough review", "parallel review", "review by
-  competency", or for large diffs (200+ lines).
+**Good:**
 ```
+"Use when: ComfyUI hangs, GPU health check, SSH tunnel issues on port 2222.
+Manages H100 GPU workers. Can restart ComfyUI, check GPU memory, diagnose
+SSH connectivity problems, and monitor job queue health."
+```
+The model will select this skill when a user mentions ComfyUI, GPU problems, SSH issues, or queue problems.
 
-## Required Sections
+### Writing Effective Triggers
 
-Every SKILL.md should include:
+1. **Include the exact phrases users will say.** "ComfyUI hangs" not "workflow execution engine becomes unresponsive."
+2. **Include the symptoms, not just the solutions.** Users describe problems ("SSH connection refused"), not solutions ("need to restart SSH tunnel").
+3. **Include the key nouns.** Model matching works on nouns: "GPU", "RunPod", "ComfyUI", "BullMQ", "port 2222."
+4. **Keep it under 200 words.** Longer descriptions dilute the trigger signal.
+
+---
+
+## Required Sections in SKILL.md
+
+Every skill file must contain these sections:
+
+### Core Instructions
+
+The main body of the skill -- what to do and how to do it. Keep this focused and procedural.
 
 ### Gotchas
-Populate from real failures. Update every time an edge case is discovered.
+
+**The most valuable section.** Populated from real failures, updated every time an edge case is encountered.
 
 ```markdown
 ## Gotchas
-- Agent tool limitation: subagents cannot launch sub-subagents
-- Context size: if competency touches >20 files, prioritize critical ones
-- False positives: parallel agents don't share context, synthesis step catches these
+
+- Docker `environment:` in docker-compose.yml OVERRIDES `env_file:` values.
+  Do not set the same variable in both places.
+
+- `127.0.0.1 s3.wasabisys.com` in /etc/hosts looks like a bug but is an
+  SNI proxy through sni_tunnel.py. Do NOT change to the real IP.
+
+- Multiple SSH connections to the same host in quick succession triggers
+  fail2ban. Use ONE paramiko client per session.
+
+- BullMQ `removeOnComplete` must be set to a number (retention count),
+  not `true`. Setting `true` removes jobs immediately, breaking job history.
 ```
 
+**Maintenance rule:** Every time a skill fails due to an edge case, add the edge case to Gotchas before closing the issue. Gotchas are living documentation of the system's sharp edges.
+
 ### Troubleshooting
-Symptom -> Cause -> Solution format.
+
+Structured as symptom-cause-solution triples:
 
 ```markdown
 ## Troubleshooting
-- **Agent times out** -> Scope too broad -> Reduce file count per competency
-- **Duplicate findings** -> Multiple competencies overlap -> Synthesis step deduplicates
+
+### SSH connection refused on port 2222
+- **Symptom:** `ssh -p 2222 user@host` returns "Connection refused"
+- **Cause:** The SSH bridge tunnel (h200_manager.py) is not running
+- **Solution:** Restart h200_manager.py: `python h200_manager.py start`
+
+### ComfyUI returns 500 on workflow execution
+- **Symptom:** POST /prompt returns HTTP 500
+- **Cause:** GPU out of memory (previous job did not clean up VRAM)
+- **Solution:** Restart ComfyUI container: `docker restart comfyui`
+  Then verify: `curl http://localhost:8188/system_stats`
+
+### Jobs stuck in "active" state indefinitely
+- **Symptom:** BullMQ dashboard shows jobs active for >30 minutes
+- **Cause:** Worker crashed mid-processing, job lock not released
+- **Solution:** Move stale active jobs to failed:
+  `bull queue clean --status active --age 1800`
 ```
+
+**Format matters.** Symptom first (what the user observes), cause second (why it happens), solution third (what to do). Do not start with the cause -- users search by symptoms.
+
+---
 
 ## File Structure
 
+### Size Limit
+
+SKILL.md should stay under **5,000 words**. If it exceeds this:
+- The model will struggle to process it efficiently
+- Important details get lost in volume
+- Maintenance becomes burdensome
+
+### Directory Organization
+
 ```
-skill-name/
-  SKILL.md          # Main file (keep under 5000 words)
-  references/       # Detailed reference material
-  scripts/          # Validation and helper scripts
+.claude/skills/
+  my-skill/
+    SKILL.md              # Main skill file (<5000 words)
+    references/           # Detailed reference material
+      api-docs.md         # API documentation
+      architecture.md     # System architecture details
+      examples.md         # Extended examples
+    scripts/              # Executable scripts
+      health-check.sh     # Health check script
+      deploy.sh           # Deployment script
+      validate.sh         # Validation script
 ```
 
-- No `README.md` inside skill folders (SKILL.md IS the readme)
-- Heavy reference material goes in `references/`, not inline
-- Scripts go in `scripts/`, not embedded in SKILL.md
+### Rules
+
+- **SKILL.md** is the entry point. It should be self-contained for common cases.
+- **references/** holds detailed material that SKILL.md links to but does not include inline.
+- **scripts/** holds executable scripts that the skill invokes.
+- **No README.md** inside a skill directory. SKILL.md IS the readme.
+
+---
 
 ## Critical Validations: Scripts, Not Words
 
-Code is deterministic. Language is not.
+This is the single most important principle for skill reliability:
 
+**Code is deterministic. Language is not.**
+
+### The Problem
+
+If a skill says "verify that the deployment succeeded by checking the health endpoint," the model might:
+- Check the wrong endpoint
+- Accept a 500 response as "healthy" because the page returned HTML
+- Skip the check entirely because it "knows" the deployment worked
+- Check once and move on even though the service needs 30 seconds to start
+
+### The Solution
+
+Replace prose validations with executable scripts:
+
+**Wrong (prose instruction):**
+```markdown
+After deploying, check that the service is healthy by hitting the
+health endpoint and confirming it returns 200.
 ```
-BAD:  "Make sure all tests pass before proceeding"
-GOOD: A shell step that runs pytest and checks exit code
+
+**Right (executable script):**
+```bash
+#!/bin/bash
+# scripts/verify-deployment.sh
+MAX_RETRIES=10
+RETRY_DELAY=3
+
+for i in $(seq 1 $MAX_RETRIES); do
+  STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/health)
+  if [ "$STATUS" = "200" ]; then
+    echo '{"status": "healthy", "attempts": '$i'}'
+    exit 0
+  fi
+  sleep $RETRY_DELAY
+done
+
+echo '{"status": "unhealthy", "attempts": '$MAX_RETRIES', "last_status": "'$STATUS'"}'
+exit 1
 ```
 
-If a validation can be expressed as a script, it should be a script. Reserve natural language instructions for creative work (writing code, analysis, design decisions).
+The script:
+- Always checks the right endpoint
+- Retries automatically
+- Returns structured output (JSON + exit code)
+- Has deterministic behavior regardless of model interpretation
 
-## YAML Frontmatter
+### When to Use Scripts vs. Prose
 
-```yaml
+| Task | Use Script | Use Prose |
+|---|---|---|
+| Health checks | Yes | No |
+| Configuration validation | Yes | No |
+| Test execution | Yes | No |
+| File existence checks | Yes | No |
+| Architectural reasoning | No | Yes |
+| Decision-making with trade-offs | No | Yes |
+| User communication | No | Yes |
+| Creative problem-solving | No | Yes |
+
+**Rule of thumb:** If the same input should always produce the same output, use a script. If judgment is required, use prose.
+
 ---
-name: skill-name
-version: 1.0.0
-description: |
-  [trigger-optimized description]
-allowed-tools:
-  - Bash
-  - Read
-  - Edit
-  - Grep
-  - Glob
-  - Agent
+
+## Skill Lifecycle
+
+### Creation
+
+1. Identify a repeating task pattern
+2. Write SKILL.md with description (trigger), core instructions, empty Gotchas, empty Troubleshooting
+3. Create initial validation scripts
+4. Test the skill on 2-3 real tasks
+
+### Iteration
+
+1. After each use, review what went wrong
+2. Add edge cases to Gotchas
+3. Add failure patterns to Troubleshooting
+4. Refine validation scripts based on observed failures
+5. Update the description if the model is not selecting the skill when it should
+
+### Retirement
+
+1. If a skill has not been used in 30+ days, review whether it is still needed
+2. If the underlying system has changed significantly, the skill may be misleading
+3. An inaccurate skill is worse than no skill -- it gives the model false confidence
+
 ---
-```
 
-- `allowed-tools`: list only what the skill actually needs
-- `description`: multi-line, include trigger phrases
-- `version`: bump on significant changes
+## Checklist for Skill Review
 
-## Anti-Patterns
+When creating or reviewing a skill, verify:
 
-1. **Monolithic skills**: a 10,000-word SKILL.md that covers everything. Break into sub-skills or use references/.
-2. **Vague descriptions**: "Helps with development" -- too broad, won't trigger correctly.
-3. **No Gotchas section**: means the skill hasn't been battle-tested.
-4. **Embedded scripts**: long bash scripts inside SKILL.md. Move to scripts/.
-5. **Human-oriented docs**: writing for a person to read, not for a model to execute.
+- [ ] Description includes specific trigger phrases users would say
+- [ ] Description is under 200 words
+- [ ] SKILL.md is under 5,000 words
+- [ ] Gotchas section exists (even if empty for new skills)
+- [ ] Troubleshooting section exists with symptom-cause-solution format
+- [ ] All deterministic validations are scripts, not prose
+- [ ] Scripts return structured output (JSON + exit code)
+- [ ] No README.md in the skill directory
+- [ ] References and scripts are in their respective subdirectories
+- [ ] The skill has been tested on at least one real task
+
+---
+
+## Relationship to Other Principles
+
+| Principle | Relationship |
+|---|---|
+| **Deterministic Orchestration (04)** | "Critical validations as scripts" is the Shell Bypass principle applied to skills |
+| **Codified Context (07)** | Skills themselves are codified context -- reusable packages of knowledge |
+| **Autoresearch (03)** | Skills with measurable pass rates can be improved through autoresearch cycles |
+| **Proof Loop (02)** | Skill execution results (script outputs) serve as evidence in the proof loop |
+| **Harness Design (01)** | Skills can be used as building blocks for Generator and Evaluator agents in a harness |
